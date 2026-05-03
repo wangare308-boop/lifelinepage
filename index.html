@@ -305,8 +305,8 @@ let fundType = 'income';
 let lastTripHash = null;
 let photoHashes = []; // { name, size, hash } per attached file
 
-const XRPL_NODE = 'wss://xrplcluster.com';
-const EXPLORER  = 'https://livenet.xrpl.org/transactions/';
+const XRPL_NODES = ['wss://xrplcluster.com', 'wss://s1.ripple.com'];
+const EXPLORER   = 'https://livenet.xrpl.org/transactions/';
 
 // ── Utilities ─────────────────────────────────────────────────────────────
 function toHex(str) {
@@ -379,13 +379,39 @@ function setFieldStatus(id, msg, isError = false) {
 }
 
 // ── XRPL connection ────────────────────────────────────────────────────────
-async function ensureConnected() {
-  if (!client) client = new xrpl.Client(XRPL_NODE);
-  if (!client.isConnected()) {
-    document.getElementById('networkStatus').textContent = 'Connecting…';
-    await client.connect();
+
+// Always tears down any existing socket and opens a fresh one.
+// Tries each node in sequence; throws only if all fail.
+async function forceConnect() {
+  if (client) {
+    try { await client.disconnect(); } catch (_) {}
+    client = null;
   }
-  document.getElementById('networkStatus').textContent = 'Mainnet ●';
+  let lastErr;
+  for (const node of XRPL_NODES) {
+    try {
+      client = new xrpl.Client(node, { connectionTimeout: 15000 });
+      document.getElementById('networkStatus').textContent = 'Connecting…';
+      await client.connect();
+      document.getElementById('networkStatus').textContent = 'Mainnet ●';
+      return;
+    } catch (e) {
+      lastErr = e;
+      try { await client.disconnect(); } catch (_) {}
+      client = null;
+    }
+  }
+  throw new Error('Cannot reach XRPL network. Check your connection and try again.');
+}
+
+// For read-only calls (balance, history): reuse socket if genuinely alive,
+// otherwise force a fresh connect.
+async function ensureConnected() {
+  if (!client || !client.isConnected()) {
+    await forceConnect();
+  } else {
+    document.getElementById('networkStatus').textContent = 'Mainnet ●';
+  }
 }
 
 async function refreshBalance() {
@@ -491,26 +517,61 @@ function buildMemoPreview() {
 }
 
 // ── Core transaction submit ─────────────────────────────────────────────────
+
+// Single attempt: fresh connect → autofill with +256 ledger buffer → sign →
+// broadcast with 90 s hard timeout.
+async function attemptTx(txJson, statusId) {
+  setFieldStatus(statusId, 'Connecting to XRPL…');
+  await forceConnect();
+  setFieldStatus(statusId, 'Preparing transaction…');
+  const prepared = await client.autofill(txJson);
+  // +256 ledgers ≈ 15 min — practical maximum validators will queue
+  prepared.LastLedgerSequence += 256;
+  const signed = wallet.sign(prepared);
+  setFieldStatus(statusId, 'Broadcasting…');
+  const result = await Promise.race([
+    client.submitAndWait(signed.tx_blob),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timed out after 90 s — tap to retry')), 90_000)
+    )
+  ]);
+  const code = result.result.meta?.TransactionResult;
+  if (code !== 'tesSUCCESS') throw new Error(code || 'Transaction failed');
+  return result.result.hash;
+}
+
+// Retryable error patterns: expired sequence, connection failures, timeouts
+function isRetryable(msg) {
+  return /temMALFORMED|Timed out|disconnect|WebSocket|Cannot reach|ECONNREFUSED|network/i.test(msg);
+}
+
 async function submitTx(txJson, btnId, statusId) {
   const btn = document.getElementById(btnId);
   const origText = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span>Submitting…';
   btn.disabled = true;
   try {
-    setFieldStatus(statusId, 'Connecting to XRPL Mainnet…');
-    await ensureConnected();
-    setFieldStatus(statusId, 'Preparing transaction…');
-    const prepared = await client.autofill(txJson);
-    const signed   = wallet.sign(prepared);
-    setFieldStatus(statusId, 'Broadcasting…');
-    const result = await client.submitAndWait(signed.tx_blob);
-    const code   = result.result.meta?.TransactionResult;
-    if (code !== 'tesSUCCESS') throw new Error(code || 'Transaction failed');
-    const hash = result.result.hash;
-    setFieldStatus(statusId, '✓ Confirmed: ' + hash.slice(0, 10) + '…');
+    let txHash;
+    try {
+      txHash = await attemptTx(txJson, statusId);
+    } catch (e) {
+      if (!isRetryable(e.message)) throw e;
+      if (e.message.includes('Timed out')) {
+        // Transaction may have reached the network — warn before retrying
+        setFieldStatus(statusId, '⚠️ Timed out — check History tab for a duplicate before this retry completes.', true);
+        toast('⚠️ Transaction may already be recorded. Check History tab. Retrying in 5 s…', 'info', 8000);
+        await new Promise(r => setTimeout(r, 5000));
+      } else {
+        setFieldStatus(statusId, 'Retrying with fresh connection…');
+        toast('Connection issue — retrying once…', 'info', 4000);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      txHash = await attemptTx(txJson, statusId);
+    }
+    setFieldStatus(statusId, '✓ Confirmed: ' + txHash.slice(0, 10) + '…');
     toast('Transaction confirmed on XRPL Mainnet.', 'success');
     await refreshBalance();
-    return hash;
+    return txHash;
   } catch (e) {
     setFieldStatus(statusId, 'Error: ' + e.message, true);
     toast('Error: ' + e.message, 'error');
