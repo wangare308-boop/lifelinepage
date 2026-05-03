@@ -530,8 +530,14 @@ async function attemptTx(txJson, statusId) {
   await forceConnect();
   setFieldStatus(statusId, 'Preparing transaction…');
   const prepared = await client.autofill(txJson);
-  // +256 ledgers ≈ 15 min — practical maximum validators will queue
-  prepared.LastLedgerSequence += 256;
+  // Guard: autofill may not set LastLedgerSequence on some nodes/versions
+  if (typeof prepared.LastLedgerSequence !== 'number') {
+    const idx = await client.getLedgerIndex();
+    prepared.LastLedgerSequence = idx + 256;
+  } else {
+    // +256 ledgers ≈ 15 min — practical maximum validators will queue
+    prepared.LastLedgerSequence += 256;
+  }
   const signed = wallet.sign(prepared);
   setFieldStatus(statusId, 'Broadcasting…');
   const response = await Promise.race([
@@ -541,10 +547,11 @@ async function attemptTx(txJson, statusId) {
     )
   ]);
   const prelim = response.result.engine_result;
+  const prelimMsg = response.result.engine_result_message || '';
   // tefPAST_SEQ means this sequence was already consumed — likely a duplicate
   if (prelim === 'tefPAST_SEQ') throw new Error('tefPAST_SEQ');
   if (prelim !== 'tesSUCCESS' && prelim !== 'terQUEUED') {
-    throw new Error(prelim || 'Network rejected transaction');
+    throw new Error(prelimMsg ? `${prelim}: ${prelimMsg}` : prelim);
   }
   return signed.hash;
 }
@@ -714,25 +721,34 @@ async function mintNFT() {
     return;
   }
 
+  // XRPL enforces a 256-byte hard limit on the URI field.
+  // Short keys keep the JSON well under that with any realistic hospital name.
+  // Key: o=org, t=trip, d=date, c=condition, h=hospital, x=trip_hash
   const metadata = {
-    name:        `Lifeline Trip Certificate #${tripNumber}`,
-    org:         'Lifeline on Wheels',
-    trip_number: tripNumber,
-    date:        date,
-    condition:   condition,
-    hospital:    hospital,
-    trip_hash:   hash,
-    minted:      new Date().toISOString(),
+    o: 'Lifeline on Wheels',
+    t: tripNumber,
+    d: date,
+    c: condition,
+    h: hospital.slice(0, 100),
+    x: hash,
   };
 
   const metadataStr = JSON.stringify(metadata);
-  if (metadataStr.length > 512) {
+  if (metadataStr.length > 256) {
     toast('Metadata too long — shorten the hospital name.', 'error');
     return;
   }
 
-  // Show preview
-  document.getElementById('nftMetaPreview').textContent = JSON.stringify(metadata, null, 2);
+  // Show preview with expanded labels for readability
+  const preview = {
+    org:       metadata.o,
+    trip:      metadata.t,
+    date:      metadata.d,
+    condition: metadata.c,
+    hospital:  metadata.h,
+    trip_hash: metadata.x,
+  };
+  document.getElementById('nftMetaPreview').textContent = JSON.stringify(preview, null, 2);
   document.getElementById('nftMetaBox').style.display = 'block';
 
   try {
