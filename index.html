@@ -519,7 +519,12 @@ function buildMemoPreview() {
 // ── Core transaction submit ─────────────────────────────────────────────────
 
 // Single attempt: fresh connect → autofill with +256 ledger buffer → sign →
-// broadcast with 90 s hard timeout.
+// fire-and-forget submit (NOT submitAndWait).
+// submitAndWait keeps the socket open waiting for ledger events — on an
+// intermittent connection it loses the socket and hangs. submit() just
+// broadcasts the bytes and returns a preliminary engine result in ~5–10 s.
+// The transaction hash is derived locally from the signed bytes, so we have
+// it before anything hits the network.
 async function attemptTx(txJson, statusId) {
   setFieldStatus(statusId, 'Connecting to XRPL…');
   await forceConnect();
@@ -529,20 +534,24 @@ async function attemptTx(txJson, statusId) {
   prepared.LastLedgerSequence += 256;
   const signed = wallet.sign(prepared);
   setFieldStatus(statusId, 'Broadcasting…');
-  const result = await Promise.race([
-    client.submitAndWait(signed.tx_blob),
+  const response = await Promise.race([
+    client.submit(signed.tx_blob),
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timed out after 90 s — tap to retry')), 90_000)
+      setTimeout(() => reject(new Error('broadcast-timeout')), 30_000)
     )
   ]);
-  const code = result.result.meta?.TransactionResult;
-  if (code !== 'tesSUCCESS') throw new Error(code || 'Transaction failed');
-  return result.result.hash;
+  const prelim = response.result.engine_result;
+  // tefPAST_SEQ means this sequence was already consumed — likely a duplicate
+  if (prelim === 'tefPAST_SEQ') throw new Error('tefPAST_SEQ');
+  if (prelim !== 'tesSUCCESS' && prelim !== 'terQUEUED') {
+    throw new Error(prelim || 'Network rejected transaction');
+  }
+  return signed.hash;
 }
 
-// Retryable error patterns: expired sequence, connection failures, timeouts
+// Retryable: sequence expired, broadcast timeout, connection failures
 function isRetryable(msg) {
-  return /temMALFORMED|Timed out|disconnect|WebSocket|Cannot reach|ECONNREFUSED|network/i.test(msg);
+  return /temMALFORMED|broadcast-timeout|disconnect|WebSocket|Cannot reach|ECONNREFUSED|network/i.test(msg);
 }
 
 async function submitTx(txJson, btnId, statusId) {
@@ -555,11 +564,17 @@ async function submitTx(txJson, btnId, statusId) {
     try {
       txHash = await attemptTx(txJson, statusId);
     } catch (e) {
+      // Duplicate sequence — original was likely already recorded
+      if (e.message === 'tefPAST_SEQ') {
+        setFieldStatus(statusId, '⚠️ May already be recorded — check History tab.');
+        toast('⚠️ Transaction may already be on-chain. Check History tab before trying again.', 'info', 10000);
+        return;
+      }
       if (!isRetryable(e.message)) throw e;
-      if (e.message.includes('Timed out')) {
-        // Transaction may have reached the network — warn before retrying
-        setFieldStatus(statusId, '⚠️ Timed out — check History tab for a duplicate before this retry completes.', true);
-        toast('⚠️ Transaction may already be recorded. Check History tab. Retrying in 5 s…', 'info', 8000);
+      if (e.message === 'broadcast-timeout') {
+        // Bytes may have reached the network — warn before retrying
+        setFieldStatus(statusId, '⚠️ Broadcast timed out — check History tab before this retry completes.', true);
+        toast('⚠️ May already be recorded. Check History tab. Retrying in 5 s…', 'info', 8000);
         await new Promise(r => setTimeout(r, 5000));
       } else {
         setFieldStatus(statusId, 'Retrying with fresh connection…');
@@ -568,13 +583,16 @@ async function submitTx(txJson, btnId, statusId) {
       }
       txHash = await attemptTx(txJson, statusId);
     }
-    setFieldStatus(statusId, '✓ Confirmed: ' + txHash.slice(0, 10) + '…');
-    toast('Transaction confirmed on XRPL Mainnet.', 'success');
+    setFieldStatus(statusId, '✓ Sent: ' + txHash.slice(0, 10) + '… — check History to confirm');
+    toast('Transaction sent — will appear in History within seconds.', 'success');
     await refreshBalance();
     return txHash;
   } catch (e) {
-    setFieldStatus(statusId, 'Error: ' + e.message, true);
-    toast('Error: ' + e.message, 'error');
+    const msg = e.message === 'broadcast-timeout'
+      ? 'Both attempts timed out. Check History — if not recorded, tap to try again.'
+      : 'Error: ' + e.message;
+    setFieldStatus(statusId, msg, true);
+    toast(msg, 'error', 10000);
     throw e;
   } finally {
     btn.innerHTML = origText;
