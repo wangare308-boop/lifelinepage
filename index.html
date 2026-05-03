@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Lifeline on Wheels</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/xrpl@2.7.0/build/xrpl-latest-min.js"></script>
+  <style>
+    body { -webkit-tap-highlight-color: transparent; }
+    .tab-active  { color: #1a4731; border-bottom: 2px solid #1a4731; }
+    .tab-inactive{ color: #9ca3af; border-bottom: 2px solid transparent; }
+    input, select, textarea { font-size: 16px !important; } /* prevent iOS zoom */
+    .card { background: white; border-radius: 0.875rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 1rem; margin-bottom: 1rem; }
+    .btn-primary   { background: #1a4731; color: white; border-radius: 0.625rem; padding: 0.75rem 1rem; font-weight: 600; font-size: 0.9rem; width: 100%; display: block; text-align: center; border: none; cursor: pointer; }
+    .btn-primary:active { background: #2d6a4f; }
+    .btn-outline   { background: transparent; color: #1a4731; border: 1.5px solid #1a4731; border-radius: 0.625rem; padding: 0.625rem 1rem; font-weight: 600; font-size: 0.875rem; width: 100%; display: block; text-align: center; cursor: pointer; }
+    .btn-outline:active { background: #d8f3dc; }
+    .field { border: 1.5px solid #e5e7eb; border-radius: 0.5rem; padding: 0.625rem 0.75rem; width: 100%; margin-bottom: 0.75rem; background: #fafafa; color: #111; }
+    .field:focus { outline: none; border-color: #1a4731; background: white; }
+    .label { font-size: 0.75rem; font-weight: 600; color: #4b5563; margin-bottom: 0.25rem; display: block; }
+    .toast { position: fixed; bottom: 5rem; left: 1rem; right: 1rem; border-radius: 0.625rem; padding: 0.75rem 1rem; font-size: 0.85rem; z-index: 100; display: none; max-width: 32rem; margin: auto; }
+    .toast-success { background: #d8f3dc; color: #1a4731; border: 1px solid #52b788; }
+    .toast-error   { background: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
+    .toast-info    { background: #e0f2fe; color: #075985; border: 1px solid #7dd3fc; }
+    .mono { font-family: 'Courier New', monospace; font-size: 0.75rem; word-break: break-all; }
+    .hash-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 0.5rem; padding: 0.625rem; margin-bottom: 0.75rem; }
+    .toggle-on  { background: #1a4731; color: white; border: 1.5px solid #1a4731; border-radius: 0.5rem; padding: 0.5rem; font-weight: 600; font-size: 0.875rem; flex: 1; text-align: center; cursor: pointer; }
+    .toggle-off { background: transparent; color: #6b7280; border: 1.5px solid #e5e7eb; border-radius: 0.5rem; padding: 0.5rem; font-weight: 600; font-size: 0.875rem; flex: 1; text-align: center; cursor: pointer; }
+    .tx-card { border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 0.625rem; margin-bottom: 0.5rem; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
+    .badge-trip { background: #d8f3dc; color: #1a4731; }
+    .badge-fund { background: #fef3c7; color: #92400e; }
+    .badge-nft  { background: #ede9fe; color: #5b21b6; }
+    .badge-other{ background: #f1f5f9; color: #475569; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.3); border-top-color: white; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; vertical-align: middle; margin-right: 6px; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+
+<!-- ─── HEADER ─────────────────────────────────────────────────────────── -->
+<div style="background:#1a4731;" class="sticky top-0 z-20 text-white px-4 py-3 flex items-center justify-between">
+  <div>
+    <div class="font-bold text-base leading-tight">Lifeline on Wheels</div>
+    <div id="walletStatus" class="text-xs" style="color:#86efac;">No wallet loaded</div>
+  </div>
+  <div class="text-right">
+    <div id="networkStatus" class="text-xs" style="color:#86efac;">—</div>
+    <div id="balanceDisplay" class="text-xs" style="color:#d1fae5;"></div>
+  </div>
+</div>
+
+<!-- ─── TOAST ──────────────────────────────────────────────────────────── -->
+<div id="toast" class="toast"></div>
+
+<!-- ─── SETUP / UNLOCK ─────────────────────────────────────────────────── -->
+<div id="setupSection" class="max-w-lg mx-auto px-4 pt-5 pb-24">
+
+  <div class="card">
+    <h2 class="font-bold mb-1" style="color:#1a4731;">Welcome</h2>
+    <p class="text-sm text-gray-500 mb-4">Enter your wallet seed to begin, or generate a new wallet for first-time setup.</p>
+
+    <label class="label">Wallet Seed</label>
+    <input type="password" id="seedInput" placeholder="sXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+      class="field" autocomplete="off" autocorrect="off" spellcheck="false">
+
+    <button class="btn-primary mb-3" onclick="unlockWallet()">Unlock Wallet</button>
+
+    <div class="border-t border-gray-100 pt-3">
+      <p class="text-xs text-gray-400 mb-2">First time? Generate a new XRPL wallet:</p>
+      <div id="xrplStatus" style="font-size:0.75rem;padding:0.4rem 0.6rem;border-radius:0.4rem;margin-bottom:0.5rem;background:#fef3c7;color:#92400e;">
+        ⏳ Loading crypto library… (needs internet)
+      </div>
+      <button id="generateBtn" onclick="generateWallet()" style="background:#d8f3dc;color:#1a4731;border:2px solid #1a4731;border-radius:0.625rem;padding:0.75rem 1rem;font-weight:700;font-size:0.9rem;width:100%;display:block;text-align:center;cursor:pointer;box-sizing:border-box;">Generate New Wallet</button>
+    </div>
+
+    <!-- Generated wallet display -->
+    <div id="generatedWallet" class="hidden mt-4 rounded-xl p-4" style="background:#f0fdf4;border:1px solid #86efac;">
+      <p class="font-bold text-sm mb-1" style="color:#1a4731;">New Wallet Generated</p>
+      <p class="text-xs text-red-600 mb-3">⚠️ Write down your seed and keep it safe. Anyone with your seed controls your funds. Never share it.</p>
+      <p class="label">Your Address (public — share with donors)</p>
+      <p id="newAddress" class="mono mb-3 p-2 bg-white rounded border border-gray-200"></p>
+      <p class="label">Your Seed (private — never share)</p>
+      <p id="newSeed" class="mono mb-3 p-2 bg-white rounded border border-gray-200"></p>
+      <p class="text-xs text-amber-700 p-2 rounded" style="background:#fef3c7;">
+        ⚠️ You must send at least <strong>2 XRP</strong> to your address above to activate it on XRPL Mainnet before you can use it. Keep a small extra buffer for transaction fees.
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<!-- ─── MAIN APP (hidden until unlock) ────────────────────────────────── -->
+<div id="mainApp" class="hidden max-w-lg mx-auto px-4 pt-4 pb-24">
+
+  <!-- ── TRIP LOG TAB ─────────────────────────────────────────────────── -->
+  <div id="tab-trip" class="tab-content">
+    <div class="card">
+      <h2 class="font-bold mb-1" style="color:#1a4731;">Log Emergency Trip</h2>
+      <p class="text-xs text-gray-400 mb-4">Trip details are hashed and the fingerprint is recorded permanently on XRPL Mainnet. Patient data stays on your device only.</p>
+
+      <label class="label">Trip Number *</label>
+      <input type="text" id="tripNumber" placeholder="e.g. 001" class="field" inputmode="numeric">
+
+      <label class="label">Date &amp; Time *</label>
+      <input type="datetime-local" id="tripDate" class="field">
+
+      <label class="label">Patient Condition *</label>
+      <select id="tripCondition" class="field">
+        <option value="">Select condition…</option>
+        <option value="Snakebite / Envenomation">Snakebite / Envenomation</option>
+        <option value="Obstetric Emergency">Obstetric Emergency</option>
+        <option value="Trauma / Accident">Trauma / Accident</option>
+        <option value="Acute Illness">Acute Illness (malaria, sepsis, cardiac, etc.)</option>
+        <option value="Other">Other</option>
+      </select>
+
+      <label class="label">Distance Travelled (km) *</label>
+      <input type="number" id="tripDistance" placeholder="e.g. 15" class="field" inputmode="decimal">
+
+      <label class="label">Hospital Destination *</label>
+      <input type="text" id="tripHospital" placeholder="e.g. Kiambu District Hospital" class="field">
+
+      <label class="label">Outcome *</label>
+      <select id="tripOutcome" class="field">
+        <option value="">Select outcome…</option>
+        <option value="Admitted to hospital">Admitted to hospital</option>
+        <option value="Treated and discharged">Treated and discharged</option>
+        <option value="Deceased">Deceased</option>
+        <option value="Unknown">Unknown</option>
+      </select>
+
+      <label class="label">Hospital Admission Code (optional)</label>
+      <input type="text" id="tripAdmissionCode" placeholder="SMS code or receipt number" class="field">
+
+      <div class="border-t border-gray-100 pt-3 mb-1">
+        <p class="text-xs font-bold text-gray-600 mb-2">Witness Co-signer (village headman or family member)</p>
+        <label class="label">Full Name *</label>
+        <input type="text" id="witnessName" placeholder="Full name of witness" class="field">
+        <label class="label">National ID Number *</label>
+        <input type="text" id="witnessId" placeholder="National ID number" class="field" inputmode="numeric">
+      </div>
+
+      <!-- Photo attachments -->
+      <div class="border-t border-gray-100 pt-3 mb-3">
+        <p class="text-xs font-bold text-gray-600 mb-1">Supporting Documents (optional)</p>
+        <p class="text-xs text-gray-400 mb-2">Photos of admission slip, hospital receipt, etc. Only their SHA-256 fingerprints go on-chain — the actual photos stay on your device.</p>
+        <label for="photoInput" style="background:#f0fdf4;border:1.5px dashed #52b788;border-radius:0.5rem;padding:0.625rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a4731" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <span class="text-sm font-semibold" style="color:#1a4731;">Attach Photos / Documents</span>
+        </label>
+        <input type="file" id="photoInput" accept="image/*,application/pdf" multiple class="hidden" onchange="handlePhotoSelect(event)">
+        <div id="photoList" class="mt-2 space-y-1"></div>
+      </div>
+
+      <!-- Hash preview -->
+      <div id="tripHashBox" class="hash-box hidden">
+        <p class="text-xs font-bold mb-1" style="color:#1a4731;">SHA-256 Fingerprint</p>
+        <p id="tripHashValue" class="mono" style="color:#166534;"></p>
+      </div>
+
+      <button id="tripBtn" class="btn-primary" onclick="logTrip()">Hash &amp; Record On-Chain</button>
+      <p id="tripStatus" class="text-xs text-center text-gray-400 mt-2"></p>
+    </div>
+  </div>
+
+  <!-- ── FUND LEDGER TAB ─────────────────────────────────────────────── -->
+  <div id="tab-fund" class="tab-content hidden">
+    <div class="card">
+      <h2 class="font-bold mb-1" style="color:#1a4731;">Fund Ledger</h2>
+      <p class="text-xs text-gray-400 mb-4">Record every income and expense on-chain with a descriptive memo. Any donor can verify the wallet in real time.</p>
+
+      <label class="label">Type *</label>
+      <div class="flex gap-2 mb-3">
+        <button id="btnIncome"  class="toggle-on"  onclick="setFundType('income')">Income</button>
+        <button id="btnExpense" class="toggle-off" onclick="setFundType('expense')">Expense</button>
+      </div>
+
+      <label class="label">Category *</label>
+      <select id="fundCategory" class="field" onchange="buildMemoPreview()">
+        <option value="">Select category…</option>
+        <optgroup label="─── Income ───">
+          <option value="Household membership fee">Household membership fee</option>
+          <option value="Non-member trip fee">Non-member trip fee</option>
+          <option value="Individual donation">Individual donation</option>
+          <option value="Diaspora donation (RLUSD)">Diaspora donation (RLUSD)</option>
+          <option value="Grant disbursement">Grant disbursement</option>
+          <option value="Church / business contribution">Church / business contribution</option>
+          <option value="Fundraising event">Fundraising event</option>
+        </optgroup>
+        <optgroup label="─── Expense ───">
+          <option value="Executive Director salary">Executive Director salary</option>
+          <option value="Secretary / Records Officer salary">Secretary / Records Officer salary</option>
+          <option value="Dispatch Coordinator salary">Dispatch Coordinator salary</option>
+          <option value="Fuel reimbursement">Fuel reimbursement</option>
+          <option value="Vehicle lease fee">Vehicle lease fee</option>
+          <option value="Vehicle maintenance">Vehicle maintenance</option>
+          <option value="First aid supplies">First aid supplies</option>
+          <option value="Antivenom">Antivenom</option>
+          <option value="Communications (data / calls)">Communications (data / calls)</option>
+          <option value="Administration / registration">Administration / registration</option>
+          <option value="Other expense">Other expense</option>
+        </optgroup>
+      </select>
+
+      <label class="label">Amount (KES) *</label>
+      <input type="number" id="fundAmount" placeholder="e.g. 15000" class="field" inputmode="decimal" oninput="buildMemoPreview()">
+
+      <label class="label">Trip # (if fuel reimbursement)</label>
+      <input type="text" id="fundTripRef" placeholder="e.g. 003" class="field" inputmode="numeric" oninput="buildMemoPreview()">
+
+      <label class="label">Additional Notes</label>
+      <input type="text" id="fundNotes" placeholder='e.g. "March 2026 payroll"' class="field" oninput="buildMemoPreview()">
+
+      <!-- Memo preview -->
+      <div class="hash-box mb-3">
+        <p class="text-xs font-bold mb-1" style="color:#1a4731;">On-chain memo preview</p>
+        <p id="memoPreviewText" class="text-xs text-gray-700">Fill in the fields above…</p>
+      </div>
+
+      <button id="fundBtn" class="btn-primary" onclick="recordFund()">Record On-Chain</button>
+      <p id="fundStatus" class="text-xs text-center text-gray-400 mt-2"></p>
+    </div>
+  </div>
+
+  <!-- ── MINT NFT TAB ─────────────────────────────────────────────────── -->
+  <div id="tab-nft" class="tab-content hidden">
+    <div class="card">
+      <h2 class="font-bold mb-1" style="color:#1a4731;">Mint Trip Certificate</h2>
+      <p class="text-xs text-gray-400 mb-4">Mints one XLS-20 NFT on XRPL Mainnet per verified trip — a tamper-proof, numbered certificate of service delivery. Fields auto-fill after logging a trip.</p>
+
+      <label class="label">Trip Number *</label>
+      <input type="text" id="nftTripNumber" placeholder="e.g. 001" class="field" inputmode="numeric">
+
+      <label class="label">Trip Date *</label>
+      <input type="date" id="nftTripDate" class="field">
+
+      <label class="label">Patient Condition *</label>
+      <select id="nftCondition" class="field">
+        <option value="">Select condition…</option>
+        <option value="Snakebite / Envenomation">Snakebite / Envenomation</option>
+        <option value="Obstetric Emergency">Obstetric Emergency</option>
+        <option value="Trauma / Accident">Trauma / Accident</option>
+        <option value="Acute Illness">Acute Illness</option>
+        <option value="Other">Other</option>
+      </select>
+
+      <label class="label">Hospital Destination *</label>
+      <input type="text" id="nftHospital" placeholder="e.g. Kiambu District Hospital" class="field">
+
+      <label class="label">Trip Hash (auto-filled from Trip Log) *</label>
+      <input type="text" id="nftHash" placeholder="SHA-256 hash" class="field mono" style="font-size:12px!important;">
+
+      <!-- Metadata preview -->
+      <div class="hash-box mb-3" id="nftMetaBox" style="display:none;">
+        <p class="text-xs font-bold mb-1" style="color:#1a4731;">NFT Metadata (embedded in URI)</p>
+        <pre id="nftMetaPreview" class="text-xs text-gray-700 overflow-auto" style="white-space:pre-wrap;"></pre>
+      </div>
+
+      <button id="nftBtn" class="btn-primary" onclick="mintNFT()">Mint Certificate NFT</button>
+      <p id="nftStatus" class="text-xs text-center text-gray-400 mt-2"></p>
+    </div>
+  </div>
+
+  <!-- ── HISTORY TAB ──────────────────────────────────────────────────── -->
+  <div id="tab-history" class="tab-content hidden">
+    <div class="card">
+      <h2 class="font-bold mb-3" style="color:#1a4731;">Transaction History</h2>
+      <button class="btn-primary mb-4" onclick="loadHistory()">Refresh</button>
+      <div id="historyList">
+        <p class="text-sm text-gray-400 text-center py-4">Tap Refresh to load recent transactions.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ─── BOTTOM NAV ─────────────────────────────────────────────────────── -->
+<nav id="bottomNav" class="hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-20 flex" style="padding-bottom: env(safe-area-inset-bottom);">
+  <button onclick="showTab('trip')"    id="nav-trip"    class="flex-1 py-2.5 flex flex-col items-center gap-0.5 text-xs font-semibold tab-active">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 8h2l1 3h4l1-3h2"/></svg>
+    Trip
+  </button>
+  <button onclick="showTab('fund')"    id="nav-fund"    class="flex-1 py-2.5 flex flex-col items-center gap-0.5 text-xs font-semibold tab-inactive">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+    Funds
+  </button>
+  <button onclick="showTab('nft')"     id="nav-nft"     class="flex-1 py-2.5 flex flex-col items-center gap-0.5 text-xs font-semibold tab-inactive">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+    NFT
+  </button>
+  <button onclick="showTab('history')" id="nav-history" class="flex-1 py-2.5 flex flex-col items-center gap-0.5 text-xs font-semibold tab-inactive">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+    History
+  </button>
+</nav>
+
+<!-- ─── JAVASCRIPT ─────────────────────────────────────────────────────── -->
+<script>
+// ── State ────────────────────────────────────────────────────────────────
+let wallet = null;
+let client = null;
+let fundType = 'income';
+let lastTripHash = null;
+let photoHashes = []; // { name, size, hash } per attached file
+
+const XRPL_NODE = 'wss://xrplcluster.com';
+const EXPLORER  = 'https://livenet.xrpl.org/transactions/';
+
+// ── Utilities ─────────────────────────────────────────────────────────────
+function toHex(str) {
+  return Array.from(new TextEncoder().encode(str))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('').toUpperCase();
+}
+
+function fromHex(hex) {
+  try {
+    const bytes = hex.match(/.{1,2}/g).map(b => parseInt(b, 16));
+    return new TextDecoder().decode(new Uint8Array(bytes));
+  } catch { return ''; }
+}
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256File(file) {
+  const buf = await file.arrayBuffer();
+  const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function handlePhotoSelect(event) {
+  const files = Array.from(event.target.files);
+  photoHashes = [];
+  const listEl = document.getElementById('photoList');
+  listEl.innerHTML = '';
+
+  for (const file of files) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.375rem 0.5rem;background:#f9fafb;border-radius:0.375rem;border:1px solid #e5e7eb;';
+    row.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      <span style="flex:1;font-size:0.75rem;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${file.name}</span>
+      <span id="hash-status-${file.name.replace(/\W/g,'_')}" style="font-size:0.7rem;color:#9ca3af;">hashing…</span>`;
+    listEl.appendChild(row);
+
+    const hash = await sha256File(file);
+    photoHashes.push({ name: file.name, size_bytes: file.size, hash });
+
+    const statusEl = document.getElementById('hash-status-' + file.name.replace(/\W/g,'_'));
+    if (statusEl) {
+      statusEl.textContent = hash.slice(0, 10) + '…';
+      statusEl.style.color = '#166534';
+      statusEl.style.fontFamily = 'monospace';
+    }
+  }
+}
+
+// ── Toast notifications ────────────────────────────────────────────────────
+let toastTimer = null;
+function toast(msg, type = 'info', duration = 6000) {
+  const el = document.getElementById('toast');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  el.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = 'none'; }, duration);
+}
+
+function setFieldStatus(id, msg, isError = false) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? '#dc2626' : '#6b7280';
+}
+
+// ── XRPL connection ────────────────────────────────────────────────────────
+async function ensureConnected() {
+  if (!client) client = new xrpl.Client(XRPL_NODE);
+  if (!client.isConnected()) {
+    document.getElementById('networkStatus').textContent = 'Connecting…';
+    await client.connect();
+  }
+  document.getElementById('networkStatus').textContent = 'Mainnet ●';
+}
+
+async function refreshBalance() {
+  try {
+    await ensureConnected();
+    const res = await client.request({
+      command: 'account_info',
+      account: wallet.address,
+      ledger_index: 'validated'
+    });
+    const xrp = parseInt(res.result.account_data.Balance) / 1_000_000;
+    document.getElementById('balanceDisplay').textContent = xrp.toFixed(4) + ' XRP';
+  } catch (e) {
+    document.getElementById('balanceDisplay').textContent = 'Balance unavailable';
+  }
+}
+
+// ── Wallet setup ───────────────────────────────────────────────────────────
+function generateWallet() {
+  if (typeof xrpl === 'undefined') {
+    alert('The crypto library has not loaded yet.\n\nMake sure you have an internet connection and refresh the page. The page needs to download a library once before it can generate wallets.');
+    return;
+  }
+  try {
+    const w = xrpl.Wallet.generate();
+    document.getElementById('newAddress').textContent = w.address;
+    document.getElementById('newSeed').textContent = w.seed;
+    document.getElementById('generatedWallet').classList.remove('hidden');
+    document.getElementById('seedInput').value = w.seed;
+    toast('Wallet generated — write down your seed now!', 'info', 10000);
+  } catch (e) {
+    alert('Wallet generation failed: ' + e.message + '\n\nPlease refresh the page and try again.');
+  }
+}
+
+// Check xrpl loaded and update status banner
+window.addEventListener('load', function() {
+  const statusEl = document.getElementById('xrplStatus');
+  if (!statusEl) return;
+  if (typeof xrpl !== 'undefined') {
+    statusEl.style.background = '#d8f3dc';
+    statusEl.style.color = '#1a4731';
+    statusEl.textContent = '✓ Ready — tap the button below to generate your wallet.';
+  } else {
+    statusEl.style.background = '#fee2e2';
+    statusEl.style.color = '#991b1b';
+    statusEl.textContent = '✗ Library failed to load. Check your internet connection and refresh.';
+  }
+});
+
+async function unlockWallet() {
+  const seed = document.getElementById('seedInput').value.trim();
+  if (!seed) { toast('Please enter your wallet seed.', 'error'); return; }
+  try {
+    wallet = xrpl.Wallet.fromSeed(seed);
+    const short = wallet.address.slice(0, 6) + '…' + wallet.address.slice(-4);
+    document.getElementById('walletStatus').textContent = short;
+    document.getElementById('setupSection').classList.add('hidden');
+    document.getElementById('mainApp').classList.remove('hidden');
+    document.getElementById('bottomNav').classList.remove('hidden');
+    // Set default date/time to now
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    document.getElementById('tripDate').value = now.toISOString().slice(0, 16);
+    showTab('trip');
+    await refreshBalance();
+  } catch (e) {
+    toast('Invalid seed — please check and try again.', 'error');
+  }
+}
+
+// ── Tab navigation ──────────────────────────────────────────────────────────
+const TABS = ['trip', 'fund', 'nft', 'history'];
+function showTab(name) {
+  TABS.forEach(t => {
+    document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== name);
+    const btn = document.getElementById(`nav-${t}`);
+    btn.className = btn.className.replace(/tab-active|tab-inactive/g, '').trim();
+    btn.className += ' ' + (t === name ? 'tab-active' : 'tab-inactive');
+  });
+  window.scrollTo(0, 0);
+}
+
+// ── Fund type toggle ────────────────────────────────────────────────────────
+function setFundType(type) {
+  fundType = type;
+  document.getElementById('btnIncome').className  = type === 'income'  ? 'toggle-on'  : 'toggle-off';
+  document.getElementById('btnExpense').className = type === 'expense' ? 'toggle-on'  : 'toggle-off';
+  buildMemoPreview();
+}
+
+function buildMemoPreview() {
+  const cat    = document.getElementById('fundCategory').value;
+  const amount = document.getElementById('fundAmount').value;
+  const trip   = document.getElementById('fundTripRef').value;
+  const notes  = document.getElementById('fundNotes').value;
+  const dir    = fundType === 'income' ? '[IN]' : '[OUT]';
+  const parts  = [dir, cat || '—', amount ? 'KES ' + amount : ''];
+  if (trip)  parts.push('Trip #' + trip);
+  if (notes) parts.push(notes);
+  parts.push('| Lifeline on Wheels');
+  document.getElementById('memoPreviewText').textContent = parts.filter(Boolean).join(' ');
+}
+
+// ── Core transaction submit ─────────────────────────────────────────────────
+async function submitTx(txJson, btnId, statusId) {
+  const btn = document.getElementById(btnId);
+  const origText = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner"></span>Submitting…';
+  btn.disabled = true;
+  try {
+    setFieldStatus(statusId, 'Connecting to XRPL Mainnet…');
+    await ensureConnected();
+    setFieldStatus(statusId, 'Preparing transaction…');
+    const prepared = await client.autofill(txJson);
+    const signed   = wallet.sign(prepared);
+    setFieldStatus(statusId, 'Broadcasting…');
+    const result = await client.submitAndWait(signed.tx_blob);
+    const code   = result.result.meta?.TransactionResult;
+    if (code !== 'tesSUCCESS') throw new Error(code || 'Transaction failed');
+    const hash = result.result.hash;
+    setFieldStatus(statusId, '✓ Confirmed: ' + hash.slice(0, 10) + '…');
+    toast('Transaction confirmed on XRPL Mainnet.', 'success');
+    await refreshBalance();
+    return hash;
+  } catch (e) {
+    setFieldStatus(statusId, 'Error: ' + e.message, true);
+    toast('Error: ' + e.message, 'error');
+    throw e;
+  } finally {
+    btn.innerHTML = origText;
+    btn.disabled = false;
+  }
+}
+
+// ── Trip Log ────────────────────────────────────────────────────────────────
+async function logTrip() {
+  const tripNumber    = document.getElementById('tripNumber').value.trim();
+  const date          = document.getElementById('tripDate').value;
+  const condition     = document.getElementById('tripCondition').value;
+  const distance      = document.getElementById('tripDistance').value;
+  const hospital      = document.getElementById('tripHospital').value.trim();
+  const outcome       = document.getElementById('tripOutcome').value;
+  const admissionCode = document.getElementById('tripAdmissionCode').value.trim();
+  const witnessName   = document.getElementById('witnessName').value.trim();
+  const witnessId     = document.getElementById('witnessId').value.trim();
+
+  if (!tripNumber || !date || !condition || !distance || !hospital || !outcome || !witnessName || !witnessId) {
+    toast('Please fill in all required fields including witness name and ID.', 'error');
+    return;
+  }
+
+  // Build structured trip record
+  const tripRecord = {
+    org:             'Lifeline on Wheels',
+    trip:            tripNumber,
+    datetime:        date,
+    condition:       condition,
+    distance_km:     distance,
+    hospital:        hospital,
+    outcome:         outcome,
+    admission_code:  admissionCode || 'N/A',
+    witness_name:    witnessName,
+    witness_id:      witnessId,
+    photo_hashes:    photoHashes.length > 0
+                       ? photoHashes.map(p => ({ name: p.name, size_bytes: p.size_bytes, sha256: p.hash }))
+                       : [],
+  };
+
+  setFieldStatus('tripStatus', 'Computing SHA-256 hash…');
+  const hash = await sha256(JSON.stringify(tripRecord));
+  lastTripHash = hash;
+
+  // Show hash
+  document.getElementById('tripHashValue').textContent = hash;
+  document.getElementById('tripHashBox').classList.remove('hidden');
+
+  // Record on XRPL via AccountSet + Memo (hash only — no patient data on-chain)
+  try {
+    await submitTx({
+      TransactionType: 'AccountSet',
+      Account: wallet.address,
+      Memos: [{
+        Memo: {
+          MemoType:   toHex('lifeline/trip-hash'),
+          MemoData:   toHex(hash),
+          MemoFormat: toHex('text/plain'),
+        }
+      }]
+    }, 'tripBtn', 'tripStatus');
+
+    // Auto-fill NFT tab
+    document.getElementById('nftHash').value        = hash;
+    document.getElementById('nftTripNumber').value  = tripNumber;
+    document.getElementById('nftTripDate').value    = date.split('T')[0];
+    document.getElementById('nftCondition').value   = condition;
+    document.getElementById('nftHospital').value    = hospital;
+
+    toast('Trip hash recorded. NFT tab is pre-filled — mint the certificate when ready.', 'success', 8000);
+  } catch (_) { /* handled in submitTx */ }
+}
+
+// ── Fund Ledger ─────────────────────────────────────────────────────────────
+async function recordFund() {
+  const cat    = document.getElementById('fundCategory').value;
+  const amount = document.getElementById('fundAmount').value;
+  const trip   = document.getElementById('fundTripRef').value.trim();
+  const notes  = document.getElementById('fundNotes').value.trim();
+
+  if (!cat || !amount) {
+    toast('Please select a category and enter an amount.', 'error');
+    return;
+  }
+
+  const dir  = fundType === 'income' ? '[IN]' : '[OUT]';
+  const parts = [dir, cat, 'KES ' + amount];
+  if (trip)  parts.push('Trip #' + trip);
+  if (notes) parts.push(notes);
+  parts.push('| Lifeline on Wheels');
+  const memo = parts.join(' ');
+
+  try {
+    await submitTx({
+      TransactionType: 'AccountSet',
+      Account: wallet.address,
+      Memos: [{
+        Memo: {
+          MemoType:   toHex('lifeline/fund'),
+          MemoData:   toHex(memo),
+          MemoFormat: toHex('text/plain'),
+        }
+      }]
+    }, 'fundBtn', 'fundStatus');
+  } catch (_) { /* handled in submitTx */ }
+}
+
+// ── NFT Mint ────────────────────────────────────────────────────────────────
+async function mintNFT() {
+  const tripNumber = document.getElementById('nftTripNumber').value.trim();
+  const date       = document.getElementById('nftTripDate').value;
+  const condition  = document.getElementById('nftCondition').value;
+  const hospital   = document.getElementById('nftHospital').value.trim();
+  const hash       = document.getElementById('nftHash').value.trim();
+
+  if (!tripNumber || !date || !condition || !hospital || !hash) {
+    toast('Please fill in all NFT fields. Log a trip first to auto-fill the hash.', 'error');
+    return;
+  }
+
+  const metadata = {
+    name:        `Lifeline Trip Certificate #${tripNumber}`,
+    org:         'Lifeline on Wheels',
+    trip_number: tripNumber,
+    date:        date,
+    condition:   condition,
+    hospital:    hospital,
+    trip_hash:   hash,
+    minted:      new Date().toISOString(),
+  };
+
+  const metadataStr = JSON.stringify(metadata);
+  if (metadataStr.length > 512) {
+    toast('Metadata too long — shorten the hospital name.', 'error');
+    return;
+  }
+
+  // Show preview
+  document.getElementById('nftMetaPreview').textContent = JSON.stringify(metadata, null, 2);
+  document.getElementById('nftMetaBox').style.display = 'block';
+
+  try {
+    await submitTx({
+      TransactionType: 'NFTokenMint',
+      Account:         wallet.address,
+      NFTokenTaxon:    1,       // collection ID: trip certificates
+      Flags:           1,       // tfBurnable
+      URI:             toHex(metadataStr),
+      Memos: [{
+        Memo: {
+          MemoType: toHex('lifeline/certificate'),
+          MemoData: toHex('Trip #' + tripNumber),
+        }
+      }]
+    }, 'nftBtn', 'nftStatus');
+  } catch (_) { /* handled in submitTx */ }
+}
+
+// ── Transaction History ─────────────────────────────────────────────────────
+async function loadHistory() {
+  const container = document.getElementById('historyList');
+  container.innerHTML = '<p class="text-sm text-gray-400 text-center py-4">Loading…</p>';
+  try {
+    await ensureConnected();
+    const res = await client.request({
+      command: 'account_tx',
+      account: wallet.address,
+      limit:   30,
+    });
+
+    const txList = res.result.transactions;
+    if (!txList || txList.length === 0) {
+      container.innerHTML = '<p class="text-sm text-gray-400 text-center py-4">No transactions found.</p>';
+      return;
+    }
+
+    container.innerHTML = txList.map(entry => {
+      // xrpl.js v3 wraps in .tx, older in flat object
+      const tx   = entry.tx || entry;
+      const meta = entry.meta || entry.metaData || {};
+      const date = tx.date
+        ? new Date((tx.date + 946684800) * 1000).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })
+        : '—';
+      const type = tx.TransactionType || '—';
+      const result = meta.TransactionResult || '—';
+      const ok = result === 'tesSUCCESS';
+
+      // Decode memo
+      let memoText = '';
+      let badgeClass = 'badge-other';
+      if (tx.Memos && tx.Memos[0]?.Memo?.MemoType) {
+        const memoType = fromHex(tx.Memos[0].Memo.MemoType);
+        const memoData = fromHex(tx.Memos[0].Memo.MemoData || '');
+        if (memoType === 'lifeline/trip-hash') {
+          memoText = 'Trip hash: ' + memoData.slice(0, 20) + '…';
+          badgeClass = 'badge-trip';
+        } else if (memoType === 'lifeline/fund') {
+          memoText = memoData.slice(0, 80);
+          badgeClass = 'badge-fund';
+        } else if (memoType === 'lifeline/certificate') {
+          memoText = 'NFT Certificate: ' + memoData;
+          badgeClass = 'badge-nft';
+        } else {
+          memoText = memoData.slice(0, 60);
+        }
+      }
+
+      const txHash = tx.hash || '';
+      const explorerUrl = EXPLORER + txHash;
+
+      return `
+        <div class="tx-card">
+          <div class="flex items-center justify-between mb-1">
+            <span class="badge ${badgeClass}">${type}</span>
+            <span class="text-xs text-gray-400">${date}</span>
+          </div>
+          ${memoText ? `<p class="text-xs text-gray-700 mb-1">${memoText}</p>` : ''}
+          <div class="flex items-center justify-between">
+            <span class="text-xs ${ok ? 'text-green-700' : 'text-red-600'}">${ok ? '✓ Success' : '✗ ' + result}</span>
+            ${txHash ? `<a href="${explorerUrl}" target="_blank" rel="noopener" class="text-xs text-blue-600 underline">${txHash.slice(0, 8)}…</a>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    container.innerHTML = `<p class="text-sm text-red-600 text-center py-4">Error: ${e.message}</p>`;
+  }
+}
+</script>
+
+</body>
+</html>
